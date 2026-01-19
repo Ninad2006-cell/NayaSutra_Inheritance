@@ -9,37 +9,37 @@ import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+// Define Roles matching your Database + Frontend mapping
 type RoleCategory =
   | "judiciary"
+  | "judge"          // Added for DB compatibility
   | "lawyer"
   | "clerk"
+  | "court_staff"    // Added for DB compatibility
   | "public_party"
   | "police"
-  | "legal_practitioner"; // Legacy support
+  | "police_officer" // Added for DB compatibility
+  | "legal_practitioner";
 
+// Updated Profile type to match your actual DB structure
 type Profile = {
   id: string;
-  email: string;
+  wallet_address?: string; // Changed from email
   full_name: string;
   role_category: RoleCategory;
-  unique_id: string | null;
+  // unique_id: string | null; // Optional, might not exist in your new schema
 };
 
 type AuthContextType = {
   user: User | null;
   session: Session | null;
   profile: Profile | null;
-  __devSetAuth?: (user: Partial<User>, profile: Profile) => void;
-  signUp: (
-    email: string,
-    password: string,
-    fullName: string,
-    roleCategory: RoleCategory,
-  ) => Promise<{ error: Error | null }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   isAuthenticated: boolean;
   isLoading: boolean;
+  // Kept for compatibility but likely unused now
+  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, fullName: string, role: RoleCategory) => Promise<{ error: Error | null }>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -50,126 +50,122 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchProfile = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
+  // FETCH PROFILE: Now uses 'id' (Primary Key) instead of 'user_id'
+  const fetchProfile = async (profileId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", profileId)
+        .maybeSingle();
 
-    if (error) {
-      console.error("Error fetching profile:", error);
+      if (error) {
+        console.error("Error fetching profile:", error);
+        return null;
+      }
+      return data as any; // Cast to any to avoid strict type mismatch during migration
+    } catch (err) {
+      console.error("Fetch profile crash:", err);
       return null;
     }
-    return data as Profile | null;
   };
 
   useEffect(() => {
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+    const initializeAuth = async () => {
+      setIsLoading(true);
 
-        // Defer profile fetch with setTimeout
-        if (session?.user) {
-          setTimeout(() => {
-            fetchProfile(session.user.id).then(setProfile);
-          }, 0);
+      // 1. CHECK LOCAL STORAGE (The "Wristband")
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+
+      if (token && userId) {
+        console.log("Restoring custom session for:", userId);
+        
+        // Fetch the real profile data
+        const profileData = await fetchProfile(userId);
+
+        if (profileData) {
+          setProfile(profileData);
+          
+          // MOCK THE USER OBJECT
+          // This ensures components expecting 'user' (like Dashboard) don't crash.
+          const mockUser: any = {
+            id: userId,
+            email: profileData.wallet_address || "wallet-user@nyaysutra.eth",
+            aud: "authenticated",
+            created_at: new Date().toISOString(),
+          };
+          setUser(mockUser);
+          
+          // Create a fake session object if needed
+          setSession({
+            access_token: token,
+            token_type: "bearer",
+            user: mockUser,
+          } as Session);
         } else {
-          setProfile(null);
+           // If profile fetch fails (e.g. deleted user), clear auth
+           console.warn("Token existed but profile not found. Logging out.");
+           localStorage.clear();
         }
-      },
-    );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-
-      if (session?.user) {
-        fetchProfile(session.user.id).then(setProfile);
+      } 
+      
+      // 2. FALLBACK: Check Standard Supabase Auth (Optional, keeps backward compatibility)
+      else {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+           // This path is unlikely to be used now, but safe to keep
+           setSession(session);
+           setUser(session.user);
+           // logic to fetch profile by user_id would go here if you still had that column
+        }
       }
-      setIsLoading(false);
-    });
 
-    return () => subscription.unsubscribe();
+      setIsLoading(false);
+    };
+
+    initializeAuth();
+
+    // Listen for storage changes (e.g. logout in another tab)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "auth_token" && !e.newValue) {
+        setUser(null);
+        setProfile(null);
+        setSession(null);
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    return () => window.removeEventListener("storage", handleStorageChange);
   }, []);
 
-  const signUp = async (
-    email: string,
-    password: string,
-    fullName: string,
-    roleCategory: RoleCategory,
-  ): Promise<{ error: Error | null }> => {
-    const redirectUrl = `${window.location.origin}/`;
-
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: redirectUrl,
-        data: {
-          full_name: fullName,
-          role_category: roleCategory,
-        },
-      },
-    });
-
-    if (error) {
-      toast.error(error.message);
-      return { error };
-    }
-
-    toast.success("Account created successfully!");
-    return { error: null };
-  };
-
-  // Development helper to set a fake authenticated user/profile when backend
-  // auth/profile creation is failing during local development. This helps
-  // frontend work to continue while the backend is being fixed.
-  const __devSetAuth = (devUser: Partial<User>, devProfile: Profile) => {
-    if (process.env.NODE_ENV !== "development") return;
-    const fakeUser = {
-      id: devUser.id ?? `dev-${Date.now()}`,
-      email: (devUser as any).email ?? devProfile.email,
-      ...devUser,
-    } as User;
-
-    setUser(fakeUser);
-    setSession(null);
-    setProfile(devProfile);
-    toast.success("Development sign-in: simulated user created");
-    console.warn(
-      "AuthContext.__devSetAuth used — this should only run in development",
-    );
-  };
-
-  const signIn = async (
-    email: string,
-    password: string,
-  ): Promise<{ error: Error | null }> => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      toast.error(error.message);
-      return { error };
-    }
-
-    toast.success("Signed in successfully!");
-    return { error: null };
-  };
-
   const signOut = async () => {
+    // 1. Clear Supabase (Good practice)
     await supabase.auth.signOut();
+    
+    // 2. Clear Local Storage (CRITICAL)
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("user_role");
+    localStorage.removeItem("user_id");
+    
+    // 3. Reset State
     setUser(null);
     setSession(null);
     setProfile(null);
+    
+    // 4. Force a storage event to notify other tabs
+    window.dispatchEvent(new StorageEvent('storage', {
+      key: 'auth_token',
+      oldValue: localStorage.getItem('auth_token'),
+      newValue: null
+    }));
+    
     toast.success("Signed out successfully");
   };
+
+  // Legacy stubs (unused but kept to prevent TS errors in other files)
+  const signIn = async (e: string, p: string) => ({ error: null });
+  const signUp = async (e: string, p: string, f: string, r: RoleCategory) => ({ error: null });
 
   const value = {
     user,
@@ -178,8 +174,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     signUp,
     signIn,
     signOut,
-    __devSetAuth,
-    isAuthenticated: !!user,
+    isAuthenticated: !!user || !!profile, // True if either exists
     isLoading,
   };
 

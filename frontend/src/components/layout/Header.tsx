@@ -119,7 +119,11 @@ export const Header = () => {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={signOut}
+                    onClick={() => {
+                      disconnect();
+                      signOut();
+                      setTimeout(() => navigate('/', { replace: true }), 100);
+                    }}
                     className="text-destructive"
                   >
                     <LogOut className="w-4 h-4 mr-2" />

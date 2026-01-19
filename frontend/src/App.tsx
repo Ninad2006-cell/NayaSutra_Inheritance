@@ -10,14 +10,14 @@ import {
   RouteObject,
   RouterProvider,
 } from "react-router-dom";
-import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { RoleProvider } from "@/contexts/RoleContext";
 import { Web3Provider } from "@/contexts/Web3Context";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
+// Removed LoadingSpinner import as we are making auth checks instant
+// import { LoadingSpinner } from "@/components/ui/loading-spinner"; 
 import { Header } from "@/components/layout/Header";
 
 // Pages
-import Index from "./pages/Index";
 import Landing from "./pages/Landing";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
@@ -65,51 +65,52 @@ const GlassLayout = () => {
   );
 };
 
-// Protected Route Component
+// --- CUSTOM AUTH LOGIC START ---
+
+// 1. Protected Route: Checks LocalStorage ("The Wristband")
+// This ignores Supabase session status and trusts your manual token.
 const ProtectedRoute = forwardRef<HTMLDivElement>((_, ref) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const token = localStorage.getItem("auth_token");
+  const isAuthenticated = !!token; // True if token exists
 
-  if (isLoading) {
-    return (
-      <div
-        ref={ref}
-        className="flex items-center justify-center min-h-screen bg-background"
-      >
-        <LoadingSpinner size={48} />
-      </div>
-    );
-  }
-
+  // Instant check - no loading spinner needed
   return isAuthenticated ? <GlassLayout /> : <Navigate to="/" replace />;
 });
 ProtectedRoute.displayName = "ProtectedRoute";
 
-// Public Route Wrapper (redirects authenticated users)
+// 2. Public Route: Redirects to Dashboard if token exists
+// Prevents logged-in users from seeing the Landing/Auth page
 const PublicRoute = forwardRef<HTMLDivElement>((_, ref) => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const token = localStorage.getItem("auth_token");
+  const isAuthenticated = !!token;
 
-  if (isLoading) {
-    return (
-      <div
-        ref={ref}
-        className="flex items-center justify-center min-h-screen bg-background"
-      >
-        <LoadingSpinner size={48} />
-      </div>
-    );
+  if (isAuthenticated) {
+    // Check role to decide destination
+    const role = localStorage.getItem("user_role") || "";
+    
+    // Normalize role string just in case
+    if (role.toLowerCase() === "police") {
+      return <Navigate to="/police/dashboard" replace />;
+    }
+    return <Navigate to="/dashboard" replace />;
   }
 
-  return isAuthenticated ? <Navigate to="/dashboard" replace /> : <Outlet />;
+  return <Outlet />;
 });
 PublicRoute.displayName = "PublicRoute";
 
+// 3. Police Route: Checks 'user_role' in LocalStorage
 const PoliceProtected = () => {
-  const { profile } = useAuth();
-  if (!profile || profile.role_category !== "police") {
+  const role = localStorage.getItem("user_role");
+  
+  if (role !== "police" && role !== "police_officer") {
+    // If user is not police (e.g. Judge), send them to main dashboard
     return <Navigate to="/dashboard" replace />;
   }
   return <Outlet />;
 };
+
+// --- ROUTES CONFIGURATION ---
 
 const routes: RouteObject[] = [
   {
@@ -149,10 +150,21 @@ const routes: RouteObject[] = [
   { path: "*", element: <NotFound /> },
 ];
 
-const router = createBrowserRouter(routes);
+// Router setup with flags
+const router = createBrowserRouter(routes, {
+  future: {
+    v7_startTransition: true,
+    v7_relativeSplatPath: true,
+    v7_fetcherPersist: true,
+    v7_normalizeFormMethod: true,
+    v7_partialHydration: true,
+    v7_skipActionErrorRevalidation: true,
+  },
+} as any);
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    {/* Web3Provider MUST act as the parent to AuthProvider */}
     <Web3Provider>
       <AuthProvider>
         <RoleProvider>

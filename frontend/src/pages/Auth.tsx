@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Gavel,
   Loader2,
-  Scale,
   Shield,
   Users,
   Wallet,
@@ -14,14 +13,15 @@ import {
   Clipboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/contexts/AuthContext";
 import { useWeb3 } from "@/contexts/Web3Context";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+// Define the Roles allowed in the UI
 type RoleCategory = "judiciary" | "lawyer" | "clerk" | "public_party" | "police";
 
+// Configuration for UI appearance per role
 const roleConfig = {
   judiciary: {
     title: "Judiciary Portal",
@@ -78,7 +78,8 @@ const roleConfig = {
 const Auth = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { isAuthenticated, __devSetAuth } = useAuth();
+  
+  // Use the Web3 Context for Wallet connection
   const {
     address,
     isConnected,
@@ -87,21 +88,42 @@ const Auth = () => {
     signMessage,
     isSigning,
   } = useWeb3();
+  
   const [authInitiated, setAuthInitiated] = useState(false);
 
+  // Get selected role from URL or default to public_party
   const roleParam = searchParams.get("role") as RoleCategory | null;
   const role: RoleCategory = roleParam && roleConfig[roleParam]
     ? roleParam
     : "public_party";
+    
   const config = roleConfig[role];
   const Icon = config.icon;
 
+  // Check for existing custom session
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate("/dashboard", { replace: true });
-    }
-  }, [isAuthenticated, navigate]);
+    const checkExistingAuth = () => {
+      const token = localStorage.getItem("auth_token");
+      const userId = localStorage.getItem("user_id");
+      
+      if (token && userId) {
+        const savedRole = localStorage.getItem("user_role") || "public_party";
+        
+        // Add a small delay to ensure state is properly set
+        setTimeout(() => {
+          if (savedRole === "police") {
+            navigate("/police/dashboard", { replace: true });
+          } else {
+            navigate("/dashboard", { replace: true });
+          }
+        }, 100);
+      }
+    };
+    
+    checkExistingAuth();
+  }, [navigate]);
 
+  // Auto-connect wallet if previously connected in MetaMask
   useEffect(() => {
     const checkExistingConnection = async () => {
       if (isConnected) return;
@@ -121,119 +143,97 @@ const Auth = () => {
     checkExistingConnection();
   }, [isConnected, connect]);
 
+  /**
+   * MAIN AUTHENTICATION LOGIC
+   */
   const handleAuth = async () => {
     if (!isConnected || !address) return;
     setAuthInitiated(true);
+    const walletAddress = address.toLowerCase();
 
     try {
-      const walletEmail = `${address.toLowerCase()}@wallet.nyaysutra.court`;
-      const message =
-        `Sign in to NyaySutra\nWallet: ${address}\nTimestamp: ${Date.now()}`;
+      console.log("Starting Strict Auth for:", walletAddress);
 
+      // STEP 1: Fetch Profile (Strict Check)
+      const { data: profileData, error: fetchError } = await supabase
+        .from("profiles")
+        .select("id, role_category, full_name")
+        .eq("wallet_address", walletAddress)
+        .maybeSingle();
+
+      if (fetchError) {
+        throw new Error("Database error: " + fetchError.message);
+      }
+
+      // If no profile found -> REJECT IMMEDIATELY
+      if (!profileData) {
+        throw new Error("Access Denied: Your wallet is not whitelisted. Please contact administrator.");
+      }
+
+      // STEP 2: Sign a simple message
+      const message = `Welcome to NyaySutra.\n\nSign this message to verify your identity.\n\nTimestamp: ${Date.now()}`;
+      
       const signature = await signMessage(message);
+
       if (!signature) {
         setAuthInitiated(false);
+        toast.error("Signature rejected");
         return;
       }
 
-      const derivedPassword = `ns_wallet_${signature.slice(0, 32)}`;
+      // STEP 3: Create a simple auth token
+      const authResult = {
+        token: btoa(JSON.stringify({
+          wallet: walletAddress,
+          id: profileData.id,
+          role: profileData.role_category,
+          timestamp: Date.now()
+        }))
+      };
 
-      const { data: signInData, error: signInError } = await supabase.auth
-        .signInWithPassword({
-          email: walletEmail,
-          password: derivedPassword,
-        });
+      // STEP 4: Login Success
+      localStorage.setItem("auth_token", authResult.token);
+      localStorage.setItem("user_role", profileData.role_category);
+      localStorage.setItem("user_id", profileData.id);
 
-      if (!signInError && signInData.session) {
-        toast.success("Wallet authenticated successfully!");
+      toast.success("Login successful!");
+      
+      // Reset auth initiated state before redirect
+      setAuthInitiated(false);
+      
+      // Call redirect function
+      checkRoleAndRedirect(profileData.role_category);
 
-        const { data: profileData } = await supabase
-          .from("profiles")
-          .select("role_category")
-          .eq("user_id", signInData.user?.id)
-          .maybeSingle();
-
-        if (profileData?.role_category === "police") {
-          navigate("/police/dashboard", { replace: true });
-        } else {
-          navigate("/dashboard", { replace: true });
-        }
-        return;
-      }
-
-      if (signInError?.message?.includes("Invalid login credentials")) {
-        const { data: signUpData, error: signUpError } = await supabase.auth
-          .signUp({
-            email: walletEmail,
-            password: derivedPassword,
-            options: {
-              emailRedirectTo: `${window.location.origin}/`,
-              data: {
-                full_name: `Wallet ${address.slice(0, 6)}...${
-                  address.slice(-4)
-                }`,
-                role_category: role,
-                wallet_address: address,
-              },
-            },
-          });
-
-        if (signUpError) {
-          if (import.meta.env.DEV && __devSetAuth) {
-            const devUser = { id: `dev-${Date.now()}`, email: walletEmail };
-            const devProfile = {
-              id: `devp-${Date.now()}`,
-              email: walletEmail,
-              full_name: `Wallet ${address.slice(0, 6)}...${address.slice(-4)}`,
-              role_category: role,
-              wallet_address: address,
-            };
-            __devSetAuth(devUser, devProfile as any);
-            navigate("/dashboard", { replace: true });
-            return;
-          }
-
-          toast.error(signUpError.message ?? "Authentication failed");
-          setAuthInitiated(false);
-          return;
-        }
-
-        toast.success("Wallet connected & account created!");
-
-        if (!signUpData.session) {
-          const { data: postSignUpData, error: postSignUpError } = await supabase.auth
-            .signInWithPassword({
-              email: walletEmail,
-              password: derivedPassword,
-            });
-
-          if (postSignUpError) {
-            toast.error("Sign-in failed after creation. Please try again.");
-            setAuthInitiated(false);
-            return;
-          }
-        }
-
-        if (role === "police") {
-          navigate("/police/dashboard", { replace: true });
-        } else {
-          navigate("/dashboard", { replace: true });
-        }
-      } else if (signInError) {
-        toast.error(signInError.message);
-        setAuthInitiated(false);
-      }
     } catch (err: any) {
-      console.error("Wallet auth error:", err);
+      console.error("Auth Error:", err);
+      // Show a clear error message to user
       toast.error(err?.message ?? "Authentication failed");
       setAuthInitiated(false);
+    } finally {
+      // Ensure auth initiated is always reset
+      setAuthInitiated(false);
     }
+  };
+
+  const checkRoleAndRedirect = (userRole: string) => {
+    // Add a small delay to ensure all state updates are complete
+    setTimeout(() => {
+      // Define logic for where different roles go
+      if (userRole === "police" || userRole === "police_officer") {
+        navigate("/police/dashboard", { replace: true });
+      } else if (userRole === "judge") {
+        navigate("/dashboard", { replace: true }); // Or /judge/dashboard
+      } else {
+        navigate("/dashboard", { replace: true });
+      }
+    }, 200);
   };
 
   const handleConnectWallet = () => {
     connect();
   };
 
+  // Button styling
   const buttonClass = cn(
     "w-full h-14 text-lg font-semibold rounded-xl transition-all relative overflow-hidden",
     "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700",
@@ -242,7 +242,7 @@ const Auth = () => {
 
   const roles: RoleCategory[] = ["judiciary", "lawyer", "clerk", "public_party", "police"];
 
-  // If no role selected yet, show role selection screen
+  // --- RENDER 1: ROLE SELECTION SCREEN (No role in URL) ---
   if (!roleParam) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 relative overflow-hidden">
@@ -315,20 +315,12 @@ const Auth = () => {
               );
             })}
           </motion.div>
-
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.8 }}
-            className="text-center text-slate-400 mt-12 max-w-2xl"
-          >
-            Each role has specialized features tailored to your needs. Select your role to proceed with secure wallet-based authentication.
-          </motion.p>
         </motion.div>
       </div>
     );
   }
 
+  // --- RENDER 2: LOGIN/SIGNUP SCREEN (Role Selected) ---
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex items-center justify-center p-4 relative overflow-hidden">
       <div className="absolute inset-0 grid-background opacity-10" />
@@ -382,9 +374,6 @@ const Auth = () => {
             <p className="text-sm text-slate-400 mt-2">
               {config.subtitle}
             </p>
-            <p className="text-xs text-slate-500 mt-2">
-              {config.description}
-            </p>
           </div>
 
           <div className="space-y-6">
@@ -413,7 +402,7 @@ const Auth = () => {
                       : (
                         <>
                           <span className="font-semibold text-lg">
-                            Verify Wallet
+                            Login with Wallet
                           </span>
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-slate-300 font-mono hidden sm:inline-block">
@@ -449,7 +438,7 @@ const Auth = () => {
                       : (
                         <>
                           <Wallet className="w-5 h-5 mr-2" />
-                          Connect MetaMask Wallet
+                          Connect MetaMask
                         </>
                       )}
                   </Button>
@@ -462,29 +451,9 @@ const Auth = () => {
               transition={{ duration: 0.4, delay: 0.2 }}
               className="text-xs text-center text-slate-500"
             >
-              🔒 Secure blockchain-based authentication. Your wallet controls your identity.
+              🔒 Secure custom authentication. Your wallet is your identity.
             </motion.p>
           </div>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: 0.3 }}
-            className="mt-6 pt-6 border-t border-white/10 space-y-2 text-xs text-slate-400"
-          >
-            <div className="flex gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-              <span>No password required - wallet signature authentication</span>
-            </div>
-            <div className="flex gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-              <span>Immutable audit trail of all activities</span>
-            </div>
-            <div className="flex gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0 mt-0.5" />
-              <span>Enterprise-grade security with blockchain verification</span>
-            </div>
-          </motion.div>
         </div>
       </motion.div>
     </div>

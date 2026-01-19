@@ -7,7 +7,8 @@ export type RoleCategory =
   | "lawyer"
   | "clerk"
   | "public_party"
-  | "police";
+  | "police"
+  | "legal_practitioner";
 
 export interface CourtUser {
   id: string;
@@ -81,19 +82,31 @@ const ROLE_PERMISSIONS: Record<CourtRole, PermissionAction[]> = {
 const RoleContext = createContext<RoleContextType | undefined>(undefined);
 
 // Map role_category to CourtRole
+// Find this function: mapRoleCategoryToCourtRole
 const mapRoleCategoryToCourtRole = (roleCategory: string): CourtRole => {
-  switch (roleCategory) {
-    case "police":
+  // Normalize string to lowercase to prevent case-sensitive bugs
+  const normalized = roleCategory?.toLowerCase() || "";
+
+  switch (normalized) {
+    case "police": 
+    case "police_officer": // Handle variations
       return "police";
-    case "judiciary":
+    
+    case "judiciary": 
+    case "judge": // <--- ADD THIS (Matches your Database)
       return "judge";
-    case "lawyer":
+    
+    case "lawyer": 
+    case "advocate":
       return "lawyer";
+    
     case "clerk":
+    case "court_staff": // <--- ADD THIS (Matches your Database)
+    case "legal_practitioner":
       return "clerk";
-    case "legal_practitioner": // Legacy support
-      return "clerk";
+      
     case "public_party":
+    case "user":
     default:
       return "observer";
   }

@@ -1,135 +1,126 @@
-import { createContext, useContext, ReactNode, useState, useEffect } from "react";
-import { toast } from "sonner";
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
-// Simplified Web3 Context - will be enhanced when wagmi is installed
 interface Web3ContextType {
-  address: string | undefined;
+  address: string | null;
   isConnected: boolean;
   isConnecting: boolean;
-  connect: () => void;
+  isSigning: boolean; // Added missing state
+  connect: () => Promise<void>;
   disconnect: () => void;
   signMessage: (message: string) => Promise<string | null>;
-  isSigning: boolean;
 }
 
 const Web3Context = createContext<Web3ContextType | undefined>(undefined);
 
-// Temporary implementation - will be replaced with wagmi when installed
-export const Web3Provider = ({ children }: { children: ReactNode }) => {
-  const [address, setAddress] = useState<string | undefined>();
-  const [isConnected, setIsConnected] = useState(false);
+export const Web3Provider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [address, setAddress] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSigning, setIsSigning] = useState(false);
 
+  // 1. AUTO-DETECT ON LOAD (The missing piece)
+  useEffect(() => {
+    const checkConnection = async () => {
+      if (typeof window !== 'undefined' && (window as any).ethereum) {
+        try {
+          const accounts = await (window as any).ethereum.request({ method: 'eth_accounts' });
+          if (accounts.length > 0) {
+            setAddress(accounts[0]);
+          }
+        } catch (error) {
+          console.error("Error checking wallet connection:", error);
+        }
+      }
+    };
+
+    checkConnection();
+
+    // 2. LISTEN FOR ACCOUNT CHANGES (User switches wallet in MetaMask)
+    if ((window as any).ethereum) {
+      (window as any).ethereum.on('accountsChanged', (accounts: string[]) => {
+        if (accounts.length > 0) {
+          setAddress(accounts[0]);
+        } else {
+          setAddress(null);
+          toast.info("Wallet disconnected");
+        }
+      });
+    }
+
+    return () => {
+      // Cleanup listener if needed
+      if ((window as any).ethereum && (window as any).ethereum.removeListener) {
+        (window as any).ethereum.removeListener('accountsChanged', () => {});
+      }
+    };
+  }, []);
+
   const connect = async () => {
-    if (typeof window.ethereum === "undefined") {
-      toast.error("MetaMask not found. Please install MetaMask.");
+    if (typeof window === 'undefined' || !(window as any).ethereum) {
+      toast.error('MetaMask is not installed!');
       return;
     }
 
     setIsConnecting(true);
     try {
-      const accounts = await window.ethereum.request({
-        method: "eth_requestAccounts",
+      const accounts = await (window as any).ethereum.request({
+        method: 'eth_requestAccounts',
       });
-      if (accounts && accounts.length > 0) {
-        setAddress(accounts[0]);
-        setIsConnected(true);
-        toast.success("Wallet connected");
-      }
+      setAddress(accounts[0]);
+      toast.success('Wallet connected successfully');
     } catch (error: any) {
-      console.error("Connection error:", error);
-      toast.error(error?.message || "Failed to connect wallet");
+      toast.error(error.message || 'Failed to connect wallet');
     } finally {
       setIsConnecting(false);
     }
   };
 
   const disconnect = () => {
-    setAddress(undefined);
-    setIsConnected(false);
-    toast.info("Wallet disconnected");
+    setAddress(null);
+    toast.info('Wallet disconnected');
   };
 
   const signMessage = async (message: string): Promise<string | null> => {
-    if (!isConnected || !address || typeof window.ethereum === "undefined") {
-      toast.error("Please connect your wallet first");
+    if (!address) {
+      toast.error("Wallet not connected");
       return null;
     }
-
+    
     setIsSigning(true);
     try {
-      const signature = await window.ethereum.request({
+      const signature = await (window as any).ethereum.request({
         method: "personal_sign",
         params: [message, address],
       });
-      return signature as string;
+      return signature;
     } catch (error: any) {
       console.error("Signing error:", error);
-      if (error.code !== 4001) {
-        // Not user rejection
-        toast.error(error?.message || "Failed to sign message");
-      }
+      toast.error("User denied message signature");
       return null;
     } finally {
       setIsSigning(false);
     }
   };
 
-  // Check if already connected
-  useEffect(() => {
-    if (typeof window.ethereum !== "undefined") {
-      window.ethereum
-        .request({ method: "eth_accounts" })
-        .then((accounts: string[]) => {
-          if (accounts && accounts.length > 0) {
-            setAddress(accounts[0]);
-            setIsConnected(true);
-          }
-        })
-        .catch(console.error);
-
-      // Listen for account changes
-      window.ethereum.on("accountsChanged", (accounts: string[]) => {
-        if (accounts && accounts.length > 0) {
-          setAddress(accounts[0]);
-          setIsConnected(true);
-        } else {
-          setAddress(undefined);
-          setIsConnected(false);
-        }
-      });
-    }
-  }, []);
-
-  const value: Web3ContextType = {
-    address,
-    isConnected,
-    isConnecting,
-    connect,
-    disconnect,
-    signMessage,
-    isSigning,
-  };
-
-  return <Web3Context.Provider value={value}>{children}</Web3Context.Provider>;
+  return (
+    <Web3Context.Provider value={{ 
+      address, 
+      isConnected: !!address, 
+      isConnecting, 
+      isSigning, // Make sure to export this
+      connect, 
+      disconnect,
+      signMessage 
+    }}>
+      {children}
+    </Web3Context.Provider>
+  );
 };
 
 export const useWeb3 = () => {
   const context = useContext(Web3Context);
   if (context === undefined) {
-    throw new Error("useWeb3 must be used within a Web3Provider");
+    throw new Error('useWeb3 must be used within a Web3Provider');
   }
   return context;
 };
-
-// Extend Window interface for TypeScript
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: any[] }) => Promise<any>;
-      on: (event: string, handler: (args: any) => void) => void;
-      removeListener: (event: string, handler: (args: any) => void) => void;
-    };
-  }
-}
