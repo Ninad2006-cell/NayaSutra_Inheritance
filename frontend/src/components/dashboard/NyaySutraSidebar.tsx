@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -9,7 +9,6 @@ import {
   FolderOpen,
   LayoutDashboard,
   LogOut,
-  PenLine,
   Scale,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,6 +20,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/contexts/AuthContext";
+import { useRole } from "@/contexts/RoleContext";
 
 interface NavItem {
   id: string;
@@ -31,32 +31,66 @@ interface NavItem {
   comingSoon?: boolean;
 }
 
-const navItems: NavItem[] = [
-  {
-    id: "dashboard",
-    label: "Dashboard",
-    icon: LayoutDashboard,
-    path: "/dashboard",
-  },
-  { id: "cases", label: "Cases", icon: FolderOpen, path: "/courts" },
-  {
-    id: "calendar",
-    label: "Court Calendar",
-    icon: Calendar,
-    path: "/court-calendar",
-  },
-  { id: "analytics", label: "Analytics", icon: BarChart3, path: "/analytics" },
-];
-
-const bottomNavItems: NavItem[] = [
-  { id: "logout", label: "Log Out", icon: LogOut, path: "/auth" },
-];
-
 export const NyaySutraSidebar = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { signOut } = useAuth();
+  const { currentUser } = useRole();
+
+  const navItems = useMemo(() => {
+    console.log("🔍 NyaySutraSidebar: Checking user role for nav items", {
+      currentUser: currentUser?.name,
+      role: currentUser?.role,
+      roleCategory: currentUser?.roleCategory,
+    });
+
+    if (currentUser?.role === 'lawyer') {
+      console.log("👨‍⚖️ NyaySutraSidebar: Rendering lawyer nav items");
+      return [
+        {
+          id: "today-cases",
+          label: "Today's Cases",
+          icon: Calendar,
+          path: "/lawyer/today-cases",
+        },
+        {
+          id: "case-repository",
+          label: "Case Repository",
+          icon: FolderOpen,
+          path: "/lawyer/case-repository",
+        },
+      ];
+    } else {
+      console.log("⚖️ NyaySutraSidebar: Rendering default/judge nav items (role:", currentUser?.role, ")");
+      // Default/judge nav items
+      return [
+        {
+          id: "dashboard",
+          label: "Dashboard",
+          icon: LayoutDashboard,
+          path: "/dashboard",
+        },
+        { id: "cases", label: "Cases", icon: FolderOpen, path: "/courts" },
+        {
+          id: "calendar",
+          label: "Court Calendar",
+          icon: Calendar,
+          path: "/court-calendar",
+        },
+        { id: "analytics", label: "Analytics", icon: BarChart3, path: "/analytics" },
+      ];
+    }
+  }, [currentUser]);
+
+  const bottomNavItems = useMemo(() => [
+    {
+      id: "logout",
+      label: "Logout",
+      icon: LogOut,
+      path: "/",
+    },
+  ], []);
 
   const isActive = (path: string, id: string) => {
     if (id === "dashboard") return location.pathname === "/dashboard";
@@ -67,6 +101,8 @@ export const NyaySutraSidebar = () => {
     }
     if (id === "calendar") return location.pathname === "/court-calendar";
     if (id === "analytics") return location.pathname === "/analytics";
+    if (id === "today-cases") return location.pathname === "/lawyer/today-cases";
+    if (id === "case-repository") return location.pathname === "/lawyer/case-repository";
     return location.pathname === path;
   };
 

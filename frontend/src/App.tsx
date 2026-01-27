@@ -33,6 +33,8 @@ import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
 import NewFIR from "./pages/NewFIR";
 import FIRDetails from "./pages/FIRDetails";
+import TodayCases from "./pages/TodayCases";
+import CaseRepository from "./pages/CaseRepository";
 import { PoliceDashboard } from "./components/dashboard/PoliceDashboard";
 
 const queryClient = new QueryClient({
@@ -83,7 +85,8 @@ const PublicRoute = forwardRef<HTMLDivElement>(() => {
   const isAuthenticated = !!token;
 
   if (isAuthenticated) {
-    // All authenticated users go to main dashboard
+    // Check if user is authenticated and redirect based on role
+    // For now, redirect to dashboard - role-based redirect will happen in Dashboard component
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -115,6 +118,8 @@ const routes: RouteObject[] = [
       { path: "/courts/:courtId/sections", element: <Sections /> },
       { path: "/sections/:sectionId/blocks", element: <CaseBlocks /> },
       { path: "/cases/:id", element: <CaseDetails /> },
+      { path: "/lawyer/today-cases", element: <TodayCases /> },
+      { path: "/lawyer/case-repository", element: <CaseRepository /> },
       { path: "/police/new-fir", element: <NewFIR /> },
       { path: "/police/firs/:id", element: <FIRDetails /> },
     ],

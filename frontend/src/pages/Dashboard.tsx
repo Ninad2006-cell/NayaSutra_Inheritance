@@ -1,5 +1,6 @@
 import { useRole } from "@/contexts/RoleContext";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { useNavigate } from "react-router-dom";
 
 // Import all dashboard components
 import { PoliceDashboard } from "@/components/dashboard/PoliceDashboard";
@@ -10,6 +11,7 @@ import { PublicDashboard } from "@/components/dashboard/PublicDashboard";
 
 const Dashboard = () => {
   const { currentUser } = useRole();
+  const navigate = useNavigate();
 
   // Wait until currentUser is loaded
   if (!currentUser) {
@@ -43,8 +45,10 @@ const Dashboard = () => {
       return <ClerkDashboard />;
 
     case "lawyer":
-      console.log("👨‍⚖️ Dashboard Router: Rendering PractitionerDashboard");
-      return <PractitionerDashboard />;
+      console.log("👨‍⚖️ Dashboard Router: Redirecting lawyer to TodayCases");
+      // Redirect lawyers to their main page instead of dashboard
+      navigate("/lawyer/today-cases", { replace: true });
+      return <div>Redirecting...</div>;
 
     case "observer":
     default:

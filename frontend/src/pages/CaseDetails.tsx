@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   AudioLines,
@@ -73,12 +73,13 @@ type DbCase = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  unique_identifier: string;
+  unique_identifier?: string;
 };
 
 const CaseDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { profile } = useAuth();
 
   // Court session management
@@ -237,6 +238,16 @@ const CaseDetails = () => {
 
   const isJudge = profile?.role_category === "judiciary" || profile?.role_category === "judge";
   const isClerk = profile?.role_category === "clerk";
+  const isLawyer = profile?.role_category === "lawyer";
+
+  // Determine default tab based on URL params and user role
+  const getDefaultTab = () => {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "upload" && isLawyer) return "upload";
+    if (tabParam === "notes" && isJudge && courtSession.isSessionActive) return "notes";
+    if (tabParam === "evidence") return "evidence";
+    return "overview";
+  };
   const isCriminal = caseData?.case_type === "criminal";
 
   const handleStartSession = async () => {
@@ -347,6 +358,14 @@ const CaseDetails = () => {
   };
 
   if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <LoadingSpinner size={48} />
+      </div>
+    );
+  }
+
+  if (!profile) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <LoadingSpinner size={48} />
@@ -536,7 +555,7 @@ const CaseDetails = () => {
           )}
 
           {/* Tabs with Evidence, Notes, and Overview */}
-          <Tabs defaultValue="overview" className="space-y-4">
+          <Tabs defaultValue={getDefaultTab()} className="space-y-4">
             <TabsList className="bg-card border border-border">
               <TabsTrigger
                 value="overview"
@@ -551,6 +570,15 @@ const CaseDetails = () => {
                 <Shield className="w-4 h-4 mr-2" />
                 Evidence Vault
               </TabsTrigger>
+              {isLawyer && (
+                <TabsTrigger
+                  value="upload"
+                  className="data-[state=active]:bg-secondary"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  Upload Evidence
+                </TabsTrigger>
+              )}
               {courtSession.isSessionActive && isJudge && (
                 <TabsTrigger
                   value="notes"
@@ -734,6 +762,67 @@ const CaseDetails = () => {
                 </Card>
               </div>
             </TabsContent>
+
+            {isLawyer && (
+              <TabsContent value="upload">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-6"
+                >
+                  {/* Upload Header */}
+                  <Card className="border-border/50">
+                    <CardHeader>
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-lg bg-primary/10 border border-primary/20">
+                          <Upload className="w-5 h-5 text-primary" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-lg">Upload Evidence</CardTitle>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Upload evidence for case {caseData.case_number}
+                          </p>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+                          <Upload className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                          <h3 className="text-lg font-semibold text-foreground mb-2">
+                            Upload Evidence Files
+                          </h3>
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Drag and drop files here or click to browse
+                          </p>
+                          <label>
+                            <input
+                              type="file"
+                              multiple
+                              onChange={handleEvidenceUpload}
+                              className="hidden"
+                              accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,.mp4,.mp3,.wav"
+                            />
+                            <Button
+                              asChild
+                              className="bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer"
+                            >
+                              <span>
+                                <Upload className="w-4 h-4 mr-2" />
+                                Choose Files
+                              </span>
+                            </Button>
+                          </label>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Supported formats: PDF, DOC, DOCX, XLS, XLSX, JPG, JPEG, PNG, MP4, MP3, WAV
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              </TabsContent>
+            )}
 
             {courtSession.isSessionActive && isJudge && (
               <TabsContent value="notes">
